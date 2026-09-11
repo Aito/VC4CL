@@ -17,12 +17,7 @@ namespace vc4cl
 {
     constexpr uint32_t PAGE_ALIGNMENT = 4096;
 
-    class Mailbox;
-    class V3D;
-    #ifndef NO_VCSM
-    class VCSM;
-    #endif
-    class VCHI;
+    class DRM;
 
     enum class CacheType : uint8_t
     {
@@ -34,18 +29,12 @@ namespace vc4cl
 
     enum class ExecutionMode : uint8_t
     {
-        MAILBOX_IOCTL,
-        V3D_REGISTER_POKING,
-        VCHI_GPU_SERVICE
+        DRM
     };
 
     enum class MemoryManagement : uint8_t
     {       
-        MAILBOX,
-	#ifndef NO_VCSM
-        VCSM,
-        VCSM_CMA
-	#endif
+        DRM
     };
 
     enum class SystemQuery : uint8_t
@@ -63,10 +52,6 @@ namespace vc4cl
 
     /**
      * Abstraction for any system access.
-     *
-     * This abstraction allows for dynamic (or at least run-time) selection of the actual system access methods
-     * (mailbox, VCSM, V3D registers, procfs, etc.) to be used and therefore facilitates debugability and comparison of
-     * the different system access methods.
      */
     class SystemAccess : public std::enable_shared_from_this<SystemAccess>
     {
@@ -102,25 +87,9 @@ namespace vc4cl
         std::string getModelType();
         std::string getProcessorType();
 
-        inline Mailbox* getMailboxIfAvailable()
+        inline DRM* getDRMIfAvailable()
         {
-            return mailbox.get();
-        }
-
-        inline V3D* getV3DIfAvailable()
-        {
-            return v3d.get();
-        }
-	#ifndef NO_VCSM
-        inline VCSM* getVCSMIfAvailable()
-        {
-            return vcsm.get();
-        }
-	#endif
-
-        inline VCHI* getVCHIIfAvailable()
-        {
-            return vchi.get();
+            return drm.get();
         }
 
         std::unique_ptr<DeviceBuffer> allocateBuffer(
@@ -131,7 +100,7 @@ namespace vc4cl
         bool flushCPUCache(const std::vector<const DeviceBuffer*>& buffers);
 
         CHECK_RETURN ExecutionHandle executeQPU(unsigned numQPUs, std::pair<uint32_t*, unsigned> controlAddress,
-            bool flushBuffer, std::chrono::milliseconds timeout);
+            bool flushBuffer, std::chrono::milliseconds timeout, const std::vector<uint32_t>& boHandles = {});
 
         const bool isEmulated;
         const ExecutionMode executionMode;
@@ -141,12 +110,7 @@ namespace vc4cl
     private:
         SystemAccess();
 
-        std::unique_ptr<Mailbox> mailbox;
-        std::unique_ptr<V3D> v3d;
-	#ifndef NO_VCSM
-        std::unique_ptr<VCSM> vcsm;
-	#endif
-        std::unique_ptr<VCHI> vchi;
+        std::unique_ptr<DRM> drm;
 
         friend std::shared_ptr<SystemAccess>& system();
     };

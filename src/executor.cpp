@@ -468,10 +468,21 @@ cl_int executeKernel(KernelExecution& args)
     if(args.performanceCounters)
         perfCollector.reset(new PerformanceCollector(*args.performanceCounters, args.kernel->info, numQPUs,
             group_limits[0] * group_limits[1] * group_limits[2]));
+    std::vector<uint32_t> boHandles;
+    boHandles.push_back(buffer->memHandle);
+    for(const auto& tmpBuf : args.tmpBuffers)
+    {
+        if (tmpBuf.second) boHandles.push_back(tmpBuf.second->memHandle);
+    }
+    for(const auto& persistBuf : args.persistentBuffers)
+    {
+        if (persistBuf.second.first) boHandles.push_back(persistBuf.second.first->memHandle);
+    }
+
     // on first execution, flush code cache
     auto start = std::chrono::high_resolution_clock::now();
     auto result = args.system->executeQPU(static_cast<unsigned>(numQPUs),
-        std::make_pair(qpu_msg_current, AS_GPU_ADDRESS(qpu_msg_current, buffer.get())), true, timeout);
+        std::make_pair(qpu_msg_current, AS_GPU_ADDRESS(qpu_msg_current, buffer.get())), true, timeout, boHandles);
     DEBUG_LOG(DebugLevel::KERNEL_EXECUTION, {
         // NOTE: This disables background-execution!
         auto success = result.waitFor();
@@ -504,7 +515,7 @@ cl_int executeKernel(KernelExecution& args)
                       << group_indices[2] << std::endl)
         // all following executions, don't flush cache
         result = args.system->executeQPU(static_cast<unsigned>(numQPUs),
-            std::make_pair(qpu_msg_current, AS_GPU_ADDRESS(qpu_msg_current, buffer.get())), false, timeout);
+            std::make_pair(qpu_msg_current, AS_GPU_ADDRESS(qpu_msg_current, buffer.get())), false, timeout, boHandles);
         // NOTE: This disables background-execution!
         DEBUG_LOG(DebugLevel::KERNEL_EXECUTION,
             std::cout << "Execution: " << (result.waitFor() ? "successful" : "failed") << std::endl)
