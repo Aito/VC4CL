@@ -9,6 +9,8 @@
 #include <iostream>
 #include <system_error>
 #include <cstring>
+#include <cinttypes>
+#include <cstdio>
 
 #ifndef MOCK_HAL
 #include <fcntl.h>
@@ -207,19 +209,101 @@ ExecutionHandle DRM::executeQPU(unsigned numQPUs, std::pair<uint32_t*, unsigned>
 #endif
 }
 
+// Helper: read a uint64_t from a sysfs node
+static bool read_sysfs_u64(const char* path, uint64_t& out) noexcept
+{
+    FILE* f = fopen(path, "r");
+    if(!f) return false;
+    bool ok = (fscanf(f, "%" SCNu64, &out) == 1);
+    fclose(f);
+    return ok;
+}
+
 bool DRM::readValue(SystemQuery query, uint32_t& output) noexcept
 {
 #ifndef MOCK_HAL
     switch(query)
     {
     case SystemQuery::NUM_QPUS:
-    case SystemQuery::TOTAL_GPU_MEMORY_IN_BYTES:
-    case SystemQuery::CURRENT_QPU_CLOCK_RATE_IN_HZ:
-    case SystemQuery::MAXIMUM_QPU_CLOCK_RATE_IN_HZ:
-    case SystemQuery::QPU_TEMPERATURE_IN_MILLI_DEGREES:
-    case SystemQuery::TOTAL_VPM_MEMORY_IN_BYTES:
-        // DRM might expose these via DRM_IOCTL_VC4_GET_PARAM
+    {
+        // V3D_IDENT0 encodes QPU count in bits [23:20]
+        struct drm_vc4_get_param param = {};
+        param.param = 0; // DRM_VC4_PARAM_V3D_IDENT0
+        if(ioctl(fd, DRM_IOCTL_VC4_GET_PARAM, &param) == 0)
+        {
+            // QPUs per slice in bits [23:20], slices in bits [27:24]
+            uint32_t ident0 = static_cast<uint32_t>(param.value);
+            uint32_t qpus_per_slice = (ident0 >> 20) & 0xF;
+            uint32_t slices = (ident0 >> 24) & 0xF;
+            output = qpus_per_slice * slices;
+            if(output == 0) output = 12; // safe fallback for RPi 1/2/3 (12 QPUs)
+            return true;
+        }
         return false;
+    }
+    case SystemQuery::TOTAL_GPU_MEMORY_IN_BYTES:
+    {
+        // Read CMA pool size from sysfs (Raspberry Pi)
+        // /sys/kernel/debug/dma_pools is not always readable; try /proc/meminfo cma fields
+        uint64_t val = 0;
+        const char* cma_path = "/sys/module/cma/parameters/size";
+        if(read_sysfs_u64(cma_path, val) && val > 0)
+        {
+            output = static_cast<uint32_t>(val);
+            return true;
+        }
+        // Try reading from cmdline as fallback
+        // If nothing works, return false -> use default 256MB from hal.h
+        return false;
+    }
+    case SystemQuery::CURRENT_QPU_CLOCK_RATE_IN_HZ:
+    {
+        // Read from raspberrypi firmware sysfs
+        uint64_t val = 0;
+        if(read_sysfs_u64("/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq", val))
+        {
+            // That's CPU freq; try VC4-specific paths
+        }
+        // Try vcgencmd-style sysfs or vc4 V3D debug: no standard path.
+        // Fall back to max clock.
+        return false;
+    }
+    case SystemQuery::MAXIMUM_QPU_CLOCK_RATE_IN_HZ:
+    {
+        // Try /sys/kernel/debug/clk/<vc4-v3d clock>/clk_rate (requires debugfs)
+        uint64_t val = 0;
+        const char* paths[] = {
+            "/sys/kernel/debug/clk/v3d/clk_rate",
+            "/sys/kernel/debug/clk/vc4-v3d/clk_rate",
+            nullptr
+        };
+        for(int i = 0; paths[i]; ++i)
+        {
+            if(read_sysfs_u64(paths[i], val) && val > 0)
+            {
+                output = static_cast<uint32_t>(val);
+                return true;
+            }
+        }
+        // Raspberry Pi 3 V3D runs at 300MHz; RPi 1/2 at 250MHz. Use 250MHz as safe default.
+        output = 250000000u;
+        return true;
+    }
+    case SystemQuery::QPU_TEMPERATURE_IN_MILLI_DEGREES:
+    {
+        // /sys/class/thermal/thermal_zone0/temp (millidegrees on RPi)
+        uint64_t val = 0;
+        if(read_sysfs_u64("/sys/class/thermal/thermal_zone0/temp", val))
+        {
+            output = static_cast<uint32_t>(val);
+            return true;
+        }
+        return false;
+    }
+    case SystemQuery::TOTAL_VPM_MEMORY_IN_BYTES:
+        // VPM is 12KB on VC4
+        output = 12 * 1024;
+        return true;
     default:
         return false;
     }

@@ -58,7 +58,8 @@ namespace vc4cl
     public:
         inline uint32_t getTotalGPUMemory()
         {
-            return querySystem(SystemQuery::TOTAL_GPU_MEMORY_IN_BYTES, 0);
+            // DRM/CMA uses system memory dynamically. We assume at least 256MB is available for CMA
+            return querySystem(SystemQuery::TOTAL_GPU_MEMORY_IN_BYTES, 256 * 1024 * 1024);
         }
 
         inline uint8_t getNumQPUs()
