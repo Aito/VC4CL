@@ -45,7 +45,9 @@ if(INCLUDE_COMPILER AND EXISTS "${VC4C_HEADER_PATH}")
 endif()
 add_test(NAME Events COMMAND TestVC4CL --events WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-add_executable(TestDRMCompute standalone_execution_test.cpp)
-target_link_libraries(TestDRMCompute VC4CL)
-target_include_directories(TestDRMCompute PRIVATE ${PROJECT_SOURCE_DIR}/test)
+if(NOT BUILD_ICD)
+  add_executable(TestDRMCompute standalone_execution_test.cpp)
+  target_link_libraries(TestDRMCompute VC4CL)
+  target_include_directories(TestDRMCompute PRIVATE ${PROJECT_SOURCE_DIR}/test)
+endif()
 
