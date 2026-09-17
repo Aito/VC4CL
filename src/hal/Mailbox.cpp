@@ -33,7 +33,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Mailbox.h"
 
-#include "V3D.h"
 #include "hal.h"
 
 #include <cstdio>
@@ -43,6 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <memory>
 #include <mutex>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -99,15 +99,49 @@ static MemoryFlag toFlags(CacheType type)
     }
 }
 
+static uint32_t busAddressToPhysicalAddress(uint32_t busAddress)
+{
+    return busAddress & ~0xC0000000;
+}
+
+static void* mapmem(unsigned base, unsigned size)
+{
+    int mem_fd;
+    unsigned offset = base % 4096; // PAGE_SIZE
+    base = base - offset;
+    
+    if((mem_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0)
+    {
+        std::cout << "[VC4CL] can't open /dev/mem" << std::endl;
+        std::cout << "[VC4CL] This program should be run as root. Try prefixing command with: sudo" << std::endl;
+        throw std::system_error(errno, std::system_category(), "Failed to open /dev/mem");
+    }
+    void* mem = mmap(nullptr, size + offset, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, base);
+    if(mem == MAP_FAILED)
+    {
+        close(mem_fd);
+        throw std::system_error(errno, std::system_category(), "Error in mapmem");
+    }
+    close(mem_fd);
+    return reinterpret_cast<char*>(mem) + offset;
+}
+
+static void unmapmem(void* addr, unsigned size)
+{
+    unsigned offset = reinterpret_cast<uintptr_t>(addr) % 4096;
+    addr = reinterpret_cast<char*>(addr) - offset;
+    munmap(addr, size + offset);
+}
+
 std::unique_ptr<DeviceBuffer> Mailbox::allocateBuffer(
     const std::shared_ptr<SystemAccess>& system, unsigned sizeInBytes, CacheType cacheType)
 {
     // munmap requires an alignment of the system page size (4096), so we need to enforce it here
-    unsigned handle = memAlloc(sizeInBytes, PAGE_ALIGNMENT, toFlags(cacheType));
+    unsigned handle = memAlloc(sizeInBytes, 4096, toFlags(cacheType));
     if(handle != 0)
     {
         DevicePointer qpuPointer = memLock(handle);
-        void* hostPointer = mapmem(V3D::busAddressToPhysicalAddress(static_cast<unsigned>(qpuPointer)), sizeInBytes);
+        void* hostPointer = mapmem(busAddressToPhysicalAddress(static_cast<unsigned>(qpuPointer)), sizeInBytes);
         DEBUG_LOG(DebugLevel::MEMORY,
             std::cout << "Allocated " << sizeInBytes << " bytes of buffer: handle " << handle << ", device address "
                       << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)

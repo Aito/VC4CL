@@ -7,6 +7,7 @@
 #include "hal.h"
 
 #include "DRM.h"
+#include "Mailbox.h"
 #include "emulator.h"
 
 #include <cstdlib>
@@ -40,7 +41,21 @@ static std::unique_ptr<DRM> initializeDRM(bool isEmulated)
 {
     if(isEmulated || std::getenv("VC4CL_NO_DRM"))
         return nullptr;
-    return std::unique_ptr<DRM>(new DRM());
+    try {
+        return std::unique_ptr<DRM>(new DRM());
+    } catch(...) { return nullptr; }
+}
+
+static std::unique_ptr<Mailbox> initializeMailbox(bool isEmulated)
+{
+    if(isEmulated)
+        return nullptr;
+    try {
+        return std::unique_ptr<Mailbox>(new Mailbox());
+    } catch(const std::exception& err) {
+        std::cout << "[VC4CL] Mailbox initialization failed: " << err.what() << std::endl;
+        return nullptr; 
+    }
 }
 
 SystemAccess::SystemAccess() :
@@ -48,13 +63,17 @@ SystemAccess::SystemAccess() :
     executionMode(ExecutionMode::DRM), 
     memoryManagement(MemoryManagement::DRM),	
     forcedCacheType(getForcedCacheType()), 
-    drm(initializeDRM(isEmulated))
+    drm(initializeDRM(isEmulated)),
+    mailbox(initializeMailbox(isEmulated))
 {
     if(isEmulated)
         DEBUG_LOG(DebugLevel::SYSTEM_ACCESS, std::cout << "[VC4CL] Using emulated system accesses " << std::endl)
-    if(drm)
+    if(mailbox)
         DEBUG_LOG(DebugLevel::SYSTEM_ACCESS,
-            std::cout << "[VC4CL] Using DRM for: kernel execution, memory allocation, system queries" << std::endl)
+            std::cout << "[VC4CL] Using Mailbox for: kernel execution, memory allocation" << std::endl)
+    else if(drm)
+        DEBUG_LOG(DebugLevel::SYSTEM_ACCESS,
+            std::cout << "[VC4CL] Using DRM for: system queries (Execution disabled due to security)" << std::endl)
 
     if(forcedCacheType.first)
     {
@@ -94,6 +113,8 @@ uint32_t SystemAccess::querySystem(SystemQuery query, uint32_t defaultValue)
     uint32_t value = defaultValue;
     if(isEmulated)
         return getEmulatedSystemQuery(query);
+    if(mailbox && mailbox->readValue(query, value))
+        return value;
     if(drm && drm->readValue(query, value))
         return value;
     return defaultValue;
@@ -103,6 +124,8 @@ std::string SystemAccess::getModelType()
 {
     if(isEmulated)
         return "(emulated)";
+    if(mailbox)
+        return "Linux Mailbox Backend";
     return "Linux DRM Backend";
 }
 
@@ -119,6 +142,8 @@ std::unique_ptr<DeviceBuffer> SystemAccess::allocateBuffer(
     if(isEmulated)
         return allocateEmulatorBuffer(shared_from_this(), sizeInBytes);
     auto effectiveCacheType = forcedCacheType.first ? forcedCacheType.second : cacheType;
+    if(mailbox)
+        return mailbox->allocateBuffer(shared_from_this(), sizeInBytes, effectiveCacheType);
     if(drm)
         return drm->allocateBuffer(shared_from_this(), sizeInBytes, effectiveCacheType);
     return nullptr;
@@ -134,6 +159,8 @@ bool SystemAccess::deallocateBuffer(const DeviceBuffer* buffer)
 {
     if(isEmulated)
         deallocateEmulatorBuffer(buffer);
+    else if(mailbox)
+        return mailbox->deallocateBuffer(buffer);
     else if(drm)
         return drm->deallocateBuffer(buffer);
     return false;
@@ -149,6 +176,8 @@ ExecutionHandle SystemAccess::executeQPU(unsigned numQPUs, std::pair<uint32_t*, 
 {
     if(isEmulated)
         return ExecutionHandle(emulateQPU(numQPUs, controlAddress.second, timeout));
+    if(mailbox)
+        return mailbox->executeQPU(numQPUs, controlAddress, flushBuffer, timeout);
     if(drm)
         return drm->executeQPU(numQPUs, controlAddress, flushBuffer, timeout, boHandles);
     return ExecutionHandle{false};
