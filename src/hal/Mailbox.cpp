@@ -69,18 +69,27 @@ static int mbox_open()
     return file_desc;
 }
 
-Mailbox::Mailbox() : fd(mbox_open())
+Mailbox::Mailbox() : fd(open(MAILBOX_FILE, 0))
 {
-    if(!enableQPU(true))
-        throw std::runtime_error("Failed to enable QPUs!");
+    if(fd < 0)
+    {
+        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "Failed to open mailbox: " << MAILBOX_FILE << std::endl)
+        return; // Do not throw, hal.cpp will check fd < 0
+    }
+
+    ignoreReturnValue(enableQPU(true) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
+        "Failed to enable QPUs");
 }
 
 Mailbox::~Mailbox()
 {
-    ignoreReturnValue(enableQPU(false) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
-        "There is no way of handling an error here");
-    close(fd);
-    DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor closed: " << fd << std::endl)
+    if(fd >= 0)
+    {
+        ignoreReturnValue(enableQPU(false) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
+            "Failed to disable QPUs");
+        close(fd);
+        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor closed: " << fd << std::endl)
+    }
 }
 
 // -------------------------------------------------------------
