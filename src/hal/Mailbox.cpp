@@ -221,13 +221,18 @@ std::unique_ptr<DeviceBuffer> Mailbox::allocateBuffer(
                   << dmabuf_fd << ", vc_handle " << alloc.vc_handle << ", device address "
                   << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)
 
-    return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, static_cast<unsigned>(dmabuf_fd), qpuPointer, hostPointer, allocSize)};
+    return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, static_cast<unsigned>(dmabuf_fd), qpuPointer, hostPointer, sizeInBytes)};
 }
 
 bool Mailbox::deallocateBuffer(const DeviceBuffer* buffer)
 {
     if(buffer->hostPointer != nullptr)
-        munmap(buffer->hostPointer, buffer->size);
+    {
+        unsigned allocSize = buffer->size;
+        if (allocSize % 4096 != 0)
+            allocSize += 4096 - (allocSize % 4096);
+        munmap(buffer->hostPointer, allocSize);
+    }
     if(buffer->memHandle != 0)
     {
         // For vcsm-cma dmabuf, closing the fd releases the memory and VideoCore handle automatically
