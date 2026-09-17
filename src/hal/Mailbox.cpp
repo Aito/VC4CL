@@ -83,59 +83,6 @@ Mailbox::~Mailbox()
     DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor closed: " << fd << std::endl)
 }
 
-static MemoryFlag toFlags(CacheType type)
-{
-    // TODO are these mappings halfway correct?
-    switch(type)
-    {
-    case CacheType::UNCACHED:
-        return MemoryFlag::DIRECT;
-    case CacheType::GPU_CACHED:
-        return MemoryFlag::NORMAL;
-    case CacheType::HOST_CACHED:
-    case CacheType::BOTH_CACHED:
-    default:
-        return MemoryFlag::L1_NONALLOCATING;
-    }
-}
-
-static uint32_t busAddressToPhysicalAddress(uint32_t busAddress)
-{
-    return busAddress & ~0xC0000000;
-}
-
-static void* mapmem(unsigned base, unsigned size)
-{
-    int mem_fd;
-    unsigned offset = base % 4096; // PAGE_SIZE
-    base = base - offset;
-    
-    if((mem_fd = open("/dev/vc-mem", O_RDWR | O_SYNC)) < 0)
-    {
-        if((mem_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0)
-        {
-            std::cout << "[VC4CL] can't open /dev/vc-mem or /dev/mem" << std::endl;
-            std::cout << "[VC4CL] This program should be run as root. Try prefixing command with: sudo" << std::endl;
-            throw std::system_error(errno, std::system_category(), "Failed to open /dev/mem");
-        }
-    }
-    void* mem = mmap(nullptr, size + offset, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, base);
-    if(mem == MAP_FAILED)
-    {
-        close(mem_fd);
-        throw std::system_error(errno, std::system_category(), "Error in mapmem");
-    }
-    close(mem_fd);
-    return reinterpret_cast<char*>(mem) + offset;
-}
-
-static void unmapmem(void* addr, unsigned size)
-{
-    unsigned offset = reinterpret_cast<uintptr_t>(addr) % 4096;
-    addr = reinterpret_cast<char*>(addr) - offset;
-    munmap(addr, size + offset);
-}
-
 // -------------------------------------------------------------
 // VCSM-CMA IOCTL Definitions (Standalone)
 // -------------------------------------------------------------
