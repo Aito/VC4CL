@@ -369,8 +369,17 @@ cl_int Program::link(const std::string& options, const std::vector<object_wrappe
         status = extractModuleInfo();
     }
 #else
-    buildInfo.status = CL_BUILD_NONE;
-    status = CL_COMPILER_NOT_AVAILABLE;
+    if(binaryCode.empty())
+    {
+        buildInfo.status = CL_BUILD_NONE;
+        status = CL_COMPILER_NOT_AVAILABLE;
+    }
+    else
+    {
+        // Program was created with clCreateProgramWithBinary
+        moduleInfo.kernels.clear();
+        status = extractModuleInfo();
+    }
 #endif
     return status;
 }

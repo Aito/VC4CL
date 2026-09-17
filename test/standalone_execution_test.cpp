@@ -3,7 +3,7 @@
 #include <vector>
 #include <string.h>
 
-const uint64_t kernel_binary[] = {
+const uint32_t kernel_binary[] = {
 #include "hello_world_vector.hex"
 };
 
@@ -53,7 +53,7 @@ int main() {
 
     err = clBuildProgram(program, 1, &device, nullptr, nullptr, nullptr);
     if (err != CL_SUCCESS) {
-        std::cerr << "Failed to build program." << std::endl;
+        std::cerr << "Failed to build program: " << err << "" << std::endl;
         return 1;
     }
 
