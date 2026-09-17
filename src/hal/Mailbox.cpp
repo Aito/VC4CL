@@ -52,28 +52,11 @@ using namespace vc4cl;
 #define IOCTL_MBOX_PROPERTY _IOWR(MAJOR_NUM, 0, char*)
 #define DEVICE_FILE_NAME "/dev/vcio"
 
-static int mbox_open()
-{
-    int file_desc;
-
-    // open a char device file used for communicating with kernel mbox driver
-    file_desc = open(DEVICE_FILE_NAME, 0);
-    if(file_desc < 0)
-    {
-        std::cout << "[VC4CL] Can't open device file: " << DEVICE_FILE_NAME << std::endl;
-        std::cout << "[VC4CL] Try creating a device file with: sudo mknod " << DEVICE_FILE_NAME << " c " << MAJOR_NUM
-                  << " 0" << std::endl;
-        throw std::system_error(errno, std::system_category(), "Failed to open mailbox");
-    }
-    DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor opened: " << file_desc << std::endl)
-    return file_desc;
-}
-
-Mailbox::Mailbox() : fd(open(MAILBOX_FILE, 0))
+Mailbox::Mailbox() : fd(open(DEVICE_FILE_NAME, 0))
 {
     if(fd < 0)
     {
-        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "Failed to open mailbox: " << MAILBOX_FILE << std::endl)
+        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "Failed to open mailbox: " << DEVICE_FILE_NAME << std::endl)
         return; // Do not throw, hal.cpp will check fd < 0
     }
 
