@@ -48,7 +48,7 @@ std::unique_ptr<DeviceBuffer> DRM::allocateBuffer(
     const std::shared_ptr<SystemAccess>& system, unsigned sizeInBytes, CacheType cacheType)
 {
 #ifndef MOCK_HAL
-    struct drm_vc4_create_bo create = {0};
+    struct drm_vc4_create_bo create = {};
     create.size = sizeInBytes;
 
     if(ioctl(fd, DRM_IOCTL_VC4_CREATE_BO, &create) != 0)
@@ -57,7 +57,7 @@ std::unique_ptr<DeviceBuffer> DRM::allocateBuffer(
         return nullptr;
     }
 
-    struct drm_vc4_mmap_bo mmap_bo = {0};
+    struct drm_vc4_mmap_bo mmap_bo = {};
     mmap_bo.handle = create.handle;
 
     if(ioctl(fd, DRM_IOCTL_VC4_MMAP_BO, &mmap_bo) != 0)
@@ -65,7 +65,7 @@ std::unique_ptr<DeviceBuffer> DRM::allocateBuffer(
         DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Failed to mmap DRM BO handle: " << create.handle << std::endl)
         // Ideally we should free the BO here, but DRM handles that when closed/freed. 
         // Need to explicitly close GEM handle?
-        struct drm_gem_close gem_close = {0};
+        struct drm_gem_close gem_close = {};
         gem_close.handle = create.handle;
         ioctl(fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
         return nullptr;
@@ -75,7 +75,7 @@ std::unique_ptr<DeviceBuffer> DRM::allocateBuffer(
     if(hostPointer == MAP_FAILED)
     {
         DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] mmap failed for DRM BO handle: " << create.handle << std::endl)
-        struct drm_gem_close gem_close = {0};
+        struct drm_gem_close gem_close = {};
         gem_close.handle = create.handle;
         ioctl(fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
         return nullptr;
@@ -103,7 +103,7 @@ bool DRM::deallocateBuffer(const DeviceBuffer* buffer)
         munmap(buffer->hostPointer, buffer->size);
     }
     
-    struct drm_gem_close gem_close = {0};
+    struct drm_gem_close gem_close = {};
     gem_close.handle = buffer->memHandle;
     
     if(ioctl(fd, DRM_IOCTL_GEM_CLOSE, &gem_close) != 0)
@@ -136,9 +136,9 @@ ExecutionHandle DRM::executeQPU(unsigned numQPUs, std::pair<uint32_t*, unsigned>
     // Build Shader Record (36 bytes for 0 attributes, prepended with 3 BO handles)
     std::vector<uint8_t> shader_rec;
     uint32_t bo_indices[] = {0, 0, 0}; // FS, VS, CS all point to the main BO (index 0 in bo_handles)
-    shader_rec.insert(shader_rec.end(), (uint8_t*)bo_indices, (uint8_t*)bo_indices + sizeof(bo_indices));
+    shader_rec.insert(shader_rec.end(), reinterpret_cast<uint8_t*>(bo_indices), reinterpret_cast<uint8_t*>(bo_indices) + sizeof(bo_indices));
 
-    uint8_t rec[36] = {0};
+    uint8_t rec[36] = {};
     // CS code offset (offset +28)
     *reinterpret_cast<uint32_t*>(&rec[28]) = code_offset;
     // CS uniforms offset (offset +32)
@@ -162,12 +162,12 @@ ExecutionHandle DRM::executeQPU(unsigned numQPUs, std::pair<uint32_t*, unsigned>
     uint32_t rec_offset = sizeof(bo_indices);
     // Number of attributes encoded in lowest 3 bits. 1 attribute (dummy) to avoid 0 which means 8.
     uint32_t addr = rec_offset | 1;
-    bin_cl.insert(bin_cl.end(), (uint8_t*)&addr, (uint8_t*)&addr + 4);
+    bin_cl.insert(bin_cl.end(), reinterpret_cast<uint8_t*>(&addr), reinterpret_cast<uint8_t*>(&addr) + 4);
     
     bin_cl.push_back(0); // VC4_PACKET_HALT
 
     // Submit CL
-    struct drm_vc4_submit_cl submit = {0};
+    struct drm_vc4_submit_cl submit = {};
     submit.bo_handles = reinterpret_cast<uint64_t>(boHandles.data());
     submit.bo_handle_count = static_cast<uint32_t>(boHandles.size());
     
@@ -191,7 +191,7 @@ ExecutionHandle DRM::executeQPU(unsigned numQPUs, std::pair<uint32_t*, unsigned>
     }
 
     // Wait for completion (using DRM_IOCTL_VC4_WAIT_SEQNO)
-    struct drm_vc4_wait_seqno wait = {0};
+    struct drm_vc4_wait_seqno wait = {};
     wait.seqno = submit.seqno;
     wait.timeout_ns = timeout.count() * 1000000ull; // ms to ns
 
