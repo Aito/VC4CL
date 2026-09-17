@@ -110,11 +110,14 @@ static void* mapmem(unsigned base, unsigned size)
     unsigned offset = base % 4096; // PAGE_SIZE
     base = base - offset;
     
-    if((mem_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0)
+    if((mem_fd = open("/dev/vc-mem", O_RDWR | O_SYNC)) < 0)
     {
-        std::cout << "[VC4CL] can't open /dev/mem" << std::endl;
-        std::cout << "[VC4CL] This program should be run as root. Try prefixing command with: sudo" << std::endl;
-        throw std::system_error(errno, std::system_category(), "Failed to open /dev/mem");
+        if((mem_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0)
+        {
+            std::cout << "[VC4CL] can't open /dev/vc-mem or /dev/mem" << std::endl;
+            std::cout << "[VC4CL] This program should be run as root. Try prefixing command with: sudo" << std::endl;
+            throw std::system_error(errno, std::system_category(), "Failed to open /dev/mem");
+        }
     }
     void* mem = mmap(nullptr, size + offset, PROT_READ | PROT_WRITE, MAP_SHARED, mem_fd, base);
     if(mem == MAP_FAILED)
@@ -133,35 +136,104 @@ static void unmapmem(void* addr, unsigned size)
     munmap(addr, size + offset);
 }
 
+// -------------------------------------------------------------
+// VCSM-CMA IOCTL Definitions (Standalone)
+// -------------------------------------------------------------
+#define VC_SM_CMA_RESOURCE_NAME               32
+#define VC_SM_CMA_MAGIC_TYPE                  'J'
+
+enum vc_sm_cma_cmd_e {
+    VC_SM_CMA_CMD_ALLOC = 0x5A,
+    VC_SM_CMA_CMD_IMPORT_DMABUF,
+    VC_SM_CMA_CMD_CLEAN_INVALID2,
+    VC_SM_CMA_CMD_LAST
+};
+
+enum vc_sm_cma_cache_e {
+    VC_SM_CMA_CACHE_NONE,
+    VC_SM_CMA_CACHE_HOST,
+    VC_SM_CMA_CACHE_VC,
+    VC_SM_CMA_CACHE_BOTH,
+};
+
+struct vc_sm_cma_ioctl_alloc {
+    uint32_t size;
+    uint32_t num;
+    uint32_t cached;
+    uint32_t pad;
+    uint8_t name[VC_SM_CMA_RESOURCE_NAME];
+    int32_t handle;
+    uint32_t vc_handle;
+    uint64_t dma_addr;
+};
+
+#define VC_SM_CMA_IOCTL_MEM_ALLOC \
+    _IOR(VC_SM_CMA_MAGIC_TYPE, VC_SM_CMA_CMD_ALLOC, struct vc_sm_cma_ioctl_alloc)
+// -------------------------------------------------------------
+
 std::unique_ptr<DeviceBuffer> Mailbox::allocateBuffer(
     const std::shared_ptr<SystemAccess>& system, unsigned sizeInBytes, CacheType cacheType)
 {
-    // munmap requires an alignment of the system page size (4096), so we need to enforce it here
-    unsigned handle = memAlloc(sizeInBytes, 4096, toFlags(cacheType));
-    if(handle != 0)
-    {
-        DevicePointer qpuPointer = memLock(handle);
-        void* hostPointer = mapmem(busAddressToPhysicalAddress(static_cast<unsigned>(qpuPointer)), sizeInBytes);
-        DEBUG_LOG(DebugLevel::MEMORY,
-            std::cout << "Allocated " << sizeInBytes << " bytes of buffer: handle " << handle << ", device address "
-                      << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)
-        return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, handle, qpuPointer, hostPointer, sizeInBytes)};
+    // Make size page-aligned
+    unsigned allocSize = sizeInBytes;
+    if (allocSize % 4096 != 0)
+        allocSize += 4096 - (allocSize % 4096);
+
+    int vcsm_fd = open("/dev/vcsm-cma", O_RDWR);
+    if(vcsm_fd < 0) {
+        std::cout << "[VC4CL] Failed to open /dev/vcsm-cma. Is the driver loaded?" << std::endl;
+        return nullptr;
     }
-    return nullptr;
+
+    vc_sm_cma_cache_e cached = VC_SM_CMA_CACHE_NONE;
+    if(cacheType == CacheType::BOTH_CACHED)
+        cached = VC_SM_CMA_CACHE_BOTH;
+    else if(cacheType == CacheType::HOST_CACHED)
+        cached = VC_SM_CMA_CACHE_HOST;
+    else if(cacheType == CacheType::GPU_CACHED)
+        cached = VC_SM_CMA_CACHE_VC;
+
+    vc_sm_cma_ioctl_alloc alloc = {};
+    alloc.size = allocSize;
+    alloc.num = 1;
+    alloc.cached = cached;
+    
+    if (ioctl(vcsm_fd, VC_SM_CMA_IOCTL_MEM_ALLOC, &alloc) < 0) {
+        std::cout << "[VC4CL] VC_SM_CMA_IOCTL_MEM_ALLOC failed" << std::endl;
+        close(vcsm_fd);
+        return nullptr;
+    }
+
+    int dmabuf_fd = alloc.handle;
+    close(vcsm_fd); // The dmabuf fd holds the reference now
+
+    void* hostPointer = mmap(nullptr, allocSize, PROT_READ | PROT_WRITE, MAP_SHARED, dmabuf_fd, 0);
+    if(hostPointer == MAP_FAILED) {
+        std::cout << "[VC4CL] Failed to mmap dmabuf fd" << std::endl;
+        close(dmabuf_fd);
+        return nullptr;
+    }
+
+    DevicePointer qpuPointer(static_cast<uint32_t>(alloc.dma_addr));
+
+    DEBUG_LOG(DebugLevel::MEMORY,
+        std::cout << "Allocated " << sizeInBytes << " (aligned " << allocSize << ") bytes via vcsm-cma: fd " 
+                  << dmabuf_fd << ", vc_handle " << alloc.vc_handle << ", device address "
+                  << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)
+
+    return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, static_cast<unsigned>(dmabuf_fd), qpuPointer, hostPointer, allocSize)};
 }
 
 bool Mailbox::deallocateBuffer(const DeviceBuffer* buffer)
 {
     if(buffer->hostPointer != nullptr)
-        unmapmem(buffer->hostPointer, buffer->size);
+        munmap(buffer->hostPointer, buffer->size);
     if(buffer->memHandle != 0)
     {
-        if(!memUnlock(buffer->memHandle))
-            return false;
-        if(!memFree(buffer->memHandle))
-            return false;
+        // For vcsm-cma dmabuf, closing the fd releases the memory and VideoCore handle automatically
+        close(static_cast<int>(buffer->memHandle));
         DEBUG_LOG(DebugLevel::MEMORY,
-            std::cout << "Deallocated " << buffer->size << " bytes of buffer: handle " << buffer->memHandle
+            std::cout << "Deallocated " << buffer->size << " bytes via vcsm-cma: fd " << buffer->memHandle
                       << ", device address " << std::hex << "0x" << buffer->qpuPointer << ", host address "
                       << buffer->hostPointer << std::dec << std::endl)
     }
@@ -260,8 +332,8 @@ bool Mailbox::readValue(SystemQuery query, uint32_t& output) noexcept
         output = msg.getContent(1);
         return true;
     }
-    case SystemQuery::NUM_QPUS:
     case SystemQuery::TOTAL_VPM_MEMORY_IN_BYTES:
+    default:
         return false;
     }
     return false;
