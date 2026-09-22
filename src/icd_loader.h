@@ -7,6 +7,10 @@
 #ifndef ICD_LOADER_H
 #define ICD_LOADER_H
 
+#ifndef CL_TARGET_OPENCL_VERSION
+#define CL_TARGET_OPENCL_VERSION 120
+#endif
+
 // These functions are declared and defined for backwards compatibility anyway
 #define CL_USE_DEPRECATED_OPENCL_1_0_APIS
 #define CL_USE_DEPRECATED_OPENCL_1_1_APIS

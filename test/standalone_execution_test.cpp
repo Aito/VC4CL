@@ -90,7 +90,7 @@ int main() {
     }
 
     std::vector<char> host_out(num_elements, 0);
-    clEnqueueReadBuffer(queue, buffer_out, CL_TRUE, 0, size, host_out.data(), 0, nullptr, nullptr);
+    err = clEnqueueReadBuffer(queue, buffer_out, CL_TRUE, 0, size, host_out.data(), 0, nullptr, nullptr); std::cout << "Read status: " << err << std::endl;
 
     bool success = true;
     for (int i = 0; i < num_elements; ++i) {

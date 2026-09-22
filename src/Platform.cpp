@@ -18,7 +18,15 @@ using namespace vc4cl;
 Platform::Platform() : Object()
 {
     // we need thread-support, so load the pthread library dynamically (if it is not yet loaded)
+#if defined(__APPLE__)
+    void* handle = dlopen("libpthread.dylib", RTLD_GLOBAL | RTLD_LAZY);
+    if(handle == nullptr)
+        handle = RTLD_DEFAULT;
+#else
     void* handle = dlopen("libpthread.so.0", RTLD_GLOBAL | RTLD_LAZY);
+    if(handle == nullptr)
+        handle = dlopen("libpthread.so", RTLD_GLOBAL | RTLD_LAZY);
+#endif
     if(handle == nullptr)
     {
         throw std::runtime_error(std::string("Error loading pthread library: ") + dlerror());

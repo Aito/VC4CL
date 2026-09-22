@@ -21,7 +21,9 @@
 #include "TestProgram.h"
 #include "TestSystem.h"
 
+#if HAS_TEST_DATA
 #include "TestData.h"
+#endif
 #include "src/Context.h"
 
 using namespace std;
@@ -76,7 +78,9 @@ int main(int argc, char** argv)
 
     for(auto i = 1; i < argc; ++i)
     {
+#if HAS_TEST_DATA
         if(!test_data::parseTestDataParameter(argv[i], emulationTestNames))
+#endif
             args.emplace_back(argv[i]);
     }
 

@@ -1,7 +1,9 @@
-cmake_minimum_required (VERSION 3.1)
+cmake_minimum_required (VERSION 3.14)
 find_package(PkgConfig)
 include(${CMAKE_ROOT}/Modules/ExternalProject.cmake)
 include(CheckSymbolExists)
+
+add_compile_definitions(CL_TARGET_OPENCL_VERSION=120)
 
 ####
 # General configuration
@@ -85,7 +87,7 @@ endif()
 
 if(MOCK_HAL)
 	if(NOT (INCLUDE_COMPILER AND VC4C_HEADER_PATH))
-		message(SEND_ERROR "Cannot run in emulation mode without compiler available!")
+		message(WARNING "Running in emulation mode without compiler available; compilation APIs may be disabled.")
 	endif()
 	# Disable ICD loading to support directly forcing the emulation runtime
 	# (e.g. via LD_PRELOAD)

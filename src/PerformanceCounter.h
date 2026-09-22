@@ -18,7 +18,22 @@
 namespace vc4cl
 {
     struct KernelHeader;
-    enum class CounterType : unsigned char;
+    enum class CounterType : unsigned char
+    {
+        IDLE_CYCLES,
+        EXECUTION_CYCLES,
+        TMU_STALL_CYCLES,
+        INSTRUCTION_CACHE_HITS,
+        INSTRUCTION_CACHE_MISSES,
+        UNIFORM_CACHE_HITS,
+        UNIFORM_CACHE_MISSES,
+        TMU_CACHE_MISSES,
+        L2_CACHE_HITS,
+        L2_CACHE_MISSES,
+        TMU_TOTAL_WORDS,
+        VCD_STALL_CYCLES,
+        VDW_STALL_CYCES
+    };
 
     /**
      * Container object for storing performance counter results
