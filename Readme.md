@@ -31,6 +31,8 @@ sudo env LD_PRELOAD=/usr/local/lib/libVC4CL.so ./your_opencl_program
 
 ## 📦 Build and Installation
 
+> **Note**: For detailed system requirements (such as disabling the KMS overlay to avoid IRQ conflicts) and advanced setup instructions, please see **[SETUP_GUIDE.md](SETUP_GUIDE.md)**.
+
 ### Prerequisites
 Before building VC4CL, you MUST install the modernized compiler, **[VC4C](<your_vc4c_repository_url>)**. You also need standard OpenCL headers and the ICD loader:
 ```bash
@@ -47,10 +49,11 @@ cd VC4CL
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_ICD=ON -DBUILD_TESTING=OFF
 
 # Build using multiple cores
-make -C build -j4
+make -C build -j2
 
 # Install to the system
 sudo cmake --install build
+sudo ldconfig
 ```
 
 ## 🛠️ Development & Modernization Environment
