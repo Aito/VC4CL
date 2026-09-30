@@ -55,7 +55,7 @@ sudo apt install -y \
 
 ```bash
 # 1. Clone
-git clone <your_vc4cl_repository_url>
+git clone https://github.com/Aito/VC4CL
 cd VC4CL
 
 # 2. CMake Configuration (BUILD_ICD=ON is required)
@@ -104,6 +104,6 @@ Number of devices                                 1
 ## 6. Next Step: Installing the VC4C Compiler
 
 The `VC4CL` built so far serves as the OpenCL **"Runtime"**.
-To build kernel source code (OpenCL C) within an OpenCL application, the **[VC4C](<your_vc4c_repository_url>)** compiler must be installed on your system to perform translation at runtime.
+To build kernel source code (OpenCL C) within an OpenCL application, the **[VC4C](https://github.com/Aito/VC4C)** compiler must be installed on your system to perform translation at runtime.
 
 By installing VC4C, the `clinfo` output for `Compiler Available` will change to `Yes`, completing your OpenCL development environment.
