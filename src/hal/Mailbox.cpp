@@ -33,7 +33,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "Mailbox.h"
 
-#include "V3D.h"
 #include "hal.h"
 
 #include <cstdio>
@@ -43,6 +42,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <memory>
 #include <mutex>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <system_error>
 #include <unistd.h>
 
@@ -52,82 +52,132 @@ using namespace vc4cl;
 #define IOCTL_MBOX_PROPERTY _IOWR(MAJOR_NUM, 0, char*)
 #define DEVICE_FILE_NAME "/dev/vcio"
 
-static int mbox_open()
+Mailbox::Mailbox() : fd(open(DEVICE_FILE_NAME, 0))
 {
-    int file_desc;
-
-    // open a char device file used for communicating with kernel mbox driver
-    file_desc = open(DEVICE_FILE_NAME, 0);
-    if(file_desc < 0)
+    if(fd < 0)
     {
-        std::cout << "[VC4CL] Can't open device file: " << DEVICE_FILE_NAME << std::endl;
-        std::cout << "[VC4CL] Try creating a device file with: sudo mknod " << DEVICE_FILE_NAME << " c " << MAJOR_NUM
-                  << " 0" << std::endl;
-        throw std::system_error(errno, std::system_category(), "Failed to open mailbox");
+        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "Failed to open mailbox: " << DEVICE_FILE_NAME << std::endl)
+        return; // Do not throw, hal.cpp will check fd < 0
     }
-    DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor opened: " << file_desc << std::endl)
-    return file_desc;
-}
 
-Mailbox::Mailbox() : fd(mbox_open())
-{
-    if(!enableQPU(true))
-        throw std::runtime_error("Failed to enable QPUs!");
+    ignoreReturnValue(enableQPU(true) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
+        "Failed to enable QPUs");
 }
 
 Mailbox::~Mailbox()
 {
-    ignoreReturnValue(enableQPU(false) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
-        "There is no way of handling an error here");
-    close(fd);
-    DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor closed: " << fd << std::endl)
-}
-
-static MemoryFlag toFlags(CacheType type)
-{
-    // TODO are these mappings halfway correct?
-    switch(type)
+    if(fd >= 0)
     {
-    case CacheType::UNCACHED:
-        return MemoryFlag::DIRECT;
-    case CacheType::GPU_CACHED:
-        return MemoryFlag::NORMAL;
-    case CacheType::HOST_CACHED:
-    case CacheType::BOTH_CACHED:
-    default:
-        return MemoryFlag::L1_NONALLOCATING;
+        ignoreReturnValue(enableQPU(false) ? CL_SUCCESS : CL_OUT_OF_RESOURCES, __FILE__, __LINE__,
+            "Failed to disable QPUs");
+        close(fd);
+        DEBUG_LOG(DebugLevel::SYSCALL, std::cout << "[VC4CL] Mailbox file descriptor closed: " << fd << std::endl)
     }
 }
+
+// -------------------------------------------------------------
+// VCSM-CMA IOCTL Definitions (Standalone)
+// -------------------------------------------------------------
+#define VC_SM_CMA_RESOURCE_NAME               32
+#define VC_SM_CMA_MAGIC_TYPE                  'J'
+
+enum vc_sm_cma_cmd_e {
+    VC_SM_CMA_CMD_ALLOC = 0x5A,
+    VC_SM_CMA_CMD_IMPORT_DMABUF,
+    VC_SM_CMA_CMD_CLEAN_INVALID2,
+    VC_SM_CMA_CMD_LAST
+};
+
+enum vc_sm_cma_cache_e {
+    VC_SM_CMA_CACHE_NONE,
+    VC_SM_CMA_CACHE_HOST,
+    VC_SM_CMA_CACHE_VC,
+    VC_SM_CMA_CACHE_BOTH,
+};
+
+struct vc_sm_cma_ioctl_alloc {
+    uint32_t size;
+    uint32_t num;
+    uint32_t cached;
+    uint32_t pad;
+    uint8_t name[VC_SM_CMA_RESOURCE_NAME];
+    int32_t handle;
+    uint32_t vc_handle;
+    uint64_t dma_addr;
+};
+
+#define VC_SM_CMA_IOCTL_MEM_ALLOC \
+    _IOR(VC_SM_CMA_MAGIC_TYPE, VC_SM_CMA_CMD_ALLOC, struct vc_sm_cma_ioctl_alloc)
+// -------------------------------------------------------------
 
 std::unique_ptr<DeviceBuffer> Mailbox::allocateBuffer(
     const std::shared_ptr<SystemAccess>& system, unsigned sizeInBytes, CacheType cacheType)
 {
-    // munmap requires an alignment of the system page size (4096), so we need to enforce it here
-    unsigned handle = memAlloc(sizeInBytes, PAGE_ALIGNMENT, toFlags(cacheType));
-    if(handle != 0)
-    {
-        DevicePointer qpuPointer = memLock(handle);
-        void* hostPointer = mapmem(V3D::busAddressToPhysicalAddress(static_cast<unsigned>(qpuPointer)), sizeInBytes);
-        DEBUG_LOG(DebugLevel::MEMORY,
-            std::cout << "Allocated " << sizeInBytes << " bytes of buffer: handle " << handle << ", device address "
-                      << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)
-        return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, handle, qpuPointer, hostPointer, sizeInBytes)};
+    // Make size page-aligned
+    unsigned allocSize = sizeInBytes;
+    if (allocSize % 4096 != 0)
+        allocSize += 4096 - (allocSize % 4096);
+
+    int vcsm_fd = open("/dev/vcsm-cma", O_RDWR);
+    if(vcsm_fd < 0) {
+        std::cout << "[VC4CL] Failed to open /dev/vcsm-cma. Is the driver loaded?" << std::endl;
+        return nullptr;
     }
-    return nullptr;
+
+    vc_sm_cma_cache_e cached = VC_SM_CMA_CACHE_NONE;
+    if(cacheType == CacheType::BOTH_CACHED)
+        cached = VC_SM_CMA_CACHE_BOTH;
+    else if(cacheType == CacheType::HOST_CACHED)
+        cached = VC_SM_CMA_CACHE_HOST;
+    else if(cacheType == CacheType::GPU_CACHED)
+        cached = VC_SM_CMA_CACHE_VC;
+
+    vc_sm_cma_ioctl_alloc alloc = {};
+    alloc.size = allocSize;
+    alloc.num = 1;
+    alloc.cached = cached;
+    
+    if (ioctl(vcsm_fd, VC_SM_CMA_IOCTL_MEM_ALLOC, &alloc) < 0) {
+        std::cout << "[VC4CL] VC_SM_CMA_IOCTL_MEM_ALLOC failed" << std::endl;
+        close(vcsm_fd);
+        return nullptr;
+    }
+
+    int dmabuf_fd = alloc.handle;
+    close(vcsm_fd); // The dmabuf fd holds the reference now
+
+    void* hostPointer = mmap(nullptr, allocSize, PROT_READ | PROT_WRITE, MAP_SHARED, dmabuf_fd, 0);
+    if(hostPointer == MAP_FAILED) {
+        std::cout << "[VC4CL] Failed to mmap dmabuf fd" << std::endl;
+        close(dmabuf_fd);
+        return nullptr;
+    }
+
+    DevicePointer qpuPointer(static_cast<uint32_t>(alloc.dma_addr));
+
+    DEBUG_LOG(DebugLevel::MEMORY,
+        std::cout << "Allocated " << sizeInBytes << " (aligned " << allocSize << ") bytes via vcsm-cma: fd " 
+                  << dmabuf_fd << ", vc_handle " << alloc.vc_handle << ", device address "
+                  << std::hex << "0x" << qpuPointer << ", host address " << hostPointer << std::dec << std::endl)
+
+    return std::unique_ptr<DeviceBuffer>{new DeviceBuffer(system, static_cast<unsigned>(dmabuf_fd), qpuPointer, hostPointer, sizeInBytes)};
 }
 
 bool Mailbox::deallocateBuffer(const DeviceBuffer* buffer)
 {
     if(buffer->hostPointer != nullptr)
-        unmapmem(buffer->hostPointer, buffer->size);
+    {
+        unsigned allocSize = buffer->size;
+        if (allocSize % 4096 != 0)
+            allocSize += 4096 - (allocSize % 4096);
+        munmap(buffer->hostPointer, allocSize);
+    }
     if(buffer->memHandle != 0)
     {
-        if(!memUnlock(buffer->memHandle))
-            return false;
-        if(!memFree(buffer->memHandle))
-            return false;
+        // For vcsm-cma dmabuf, closing the fd releases the memory and VideoCore handle automatically
+        close(static_cast<int>(buffer->memHandle));
         DEBUG_LOG(DebugLevel::MEMORY,
-            std::cout << "Deallocated " << buffer->size << " bytes of buffer: handle " << buffer->memHandle
+            std::cout << "Deallocated " << buffer->size << " bytes via vcsm-cma: fd " << buffer->memHandle
                       << ", device address " << std::hex << "0x" << buffer->qpuPointer << ", host address "
                       << buffer->hostPointer << std::dec << std::endl)
     }
@@ -226,8 +276,8 @@ bool Mailbox::readValue(SystemQuery query, uint32_t& output) noexcept
         output = msg.getContent(1);
         return true;
     }
-    case SystemQuery::NUM_QPUS:
     case SystemQuery::TOTAL_VPM_MEMORY_IN_BYTES:
+    default:
         return false;
     }
     return false;

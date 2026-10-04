@@ -7,8 +7,8 @@
 #include "PerformanceCounter.h"
 
 #include "Program.h"
-#include "hal/V3D.h"
 #include "hal/hal.h"
+#include "hal/DRM.h"
 
 #include <chrono>
 #include <cmath>
@@ -105,60 +105,12 @@ PerformanceCollector::PerformanceCollector(
     PerformanceCounters& counters, const KernelHeader& kernel, size_t numQPUs, size_t numGroups) :
     counters(counters)
 {
-    // set-up and clear the performance counters
     std::lock_guard<std::mutex> guard(counters.countersLock);
-    auto sys = system();
-    auto v3d = system()->getV3DIfAvailable();
-    if(!v3d || !sys)
-    {
-        counters.querySuccessful = false;
-        DEBUG_LOG(DebugLevel::PERFORMANCE_COUNTERS,
-            std::cout << "Performance counters are disabled, since V3D interface is not active!" << std::endl)
-        return;
-    }
-    // fill the static kernel info
-    counters.clockSpeed = sys->getCurrentQPUClockRateInHz();
-    counters.numInstructions = kernel.getLength();
-    counters.numExplicitUniforms = static_cast<uint32_t>(kernel.getExplicitUniformCount());
-    counters.numWorkGroups = numGroups;
-    counters.numQPUs = numQPUs;
-    for(uint8_t i = 0; i < PERFORMANCE_COUNTERS.size(); ++i)
-    {
-        if(!v3d->setCounter(i, PERFORMANCE_COUNTERS[i].first))
-        {
-            counters.querySuccessful = false;
-            break;
-        }
-    }
-    // set to start timestamp
-    counters.elapsedTime = std::chrono::duration_cast<decltype(counters.elapsedTime)>(
-        std::chrono::high_resolution_clock::now().time_since_epoch());
+    counters.querySuccessful = false;
+    DEBUG_LOG(DebugLevel::PERFORMANCE_COUNTERS,
+        std::cout << "Performance counters are disabled with DRM backend." << std::endl)
 }
 
 PerformanceCollector::~PerformanceCollector() noexcept
 {
-    // read and unset the performance counters
-    if(!counters.querySuccessful)
-        return;
-    std::lock_guard<std::mutex> guard(counters.countersLock);
-    // calculate actual duration
-    counters.elapsedTime = std::chrono::duration_cast<decltype(counters.elapsedTime)>(
-        std::chrono::high_resolution_clock::now().time_since_epoch() - counters.elapsedTime);
-    auto v3d = system()->getV3DIfAvailable();
-    if(!v3d)
-    {
-        counters.querySuccessful = false;
-        return;
-    }
-    for(uint8_t i = 0; i < PERFORMANCE_COUNTERS.size(); ++i)
-    {
-        auto val = v3d->getCounter(i);
-        v3d->disableCounter(i);
-        if(val == -1)
-        {
-            counters.querySuccessful = false;
-            break;
-        }
-        counters.counterValues[PERFORMANCE_COUNTERS[i].first] += val;
-    }
 }

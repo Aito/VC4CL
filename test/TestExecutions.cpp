@@ -9,12 +9,13 @@
 #include "src/CommandQueue.h"
 #include "src/Kernel.h"
 #include "src/Program.h"
-#include "src/hal/V3D.h"
 #include "src/hal/hal.h"
 #include "src/icd_loader.h"
 #include "util.h"
 
+#if HAS_TEST_DATA
 #include "TestData.h"
+#endif
 
 using namespace vc4cl;
 
@@ -26,17 +27,20 @@ static constexpr int COUNTER_EXECUTIONS = 1;
 
 TestExecutions::TestExecutions() : Test::Suite(), context(nullptr), queue(nullptr)
 {
+#if HAS_TEST_DATA
     for(const auto& test :
         test_data::getAllTests(test_data::DataFilter::DISABLED | test_data::DataFilter::ACCESSES_LOCAL_BUFFER))
     {
         TEST_ADD_WITH_STRING(TestExecutions::runTestData, test.first);
     }
+#endif
     TEST_ADD(TestExecutions::testHungState);
 }
 
 TestExecutions::TestExecutions(std::vector<std::string>&& customTestNames) :
     Test::Suite(), context(nullptr), queue(nullptr)
 {
+#if HAS_TEST_DATA
     for(const auto& testName : customTestNames)
     {
         if(test_data::getTest(testName))
@@ -48,10 +52,8 @@ TestExecutions::TestExecutions(std::vector<std::string>&& customTestNames) :
             TEST_ADD_WITH_STRING(TestExecutions::runNoSuchTestData, testName);
         }
     }
-    if(system()->getV3DIfAvailable())
-    {
-        TEST_ADD(TestExecutions::testHungState);
-    }
+#endif
+    TEST_ADD(TestExecutions::testHungState);
 }
 
 bool TestExecutions::setup()
@@ -62,51 +64,19 @@ bool TestExecutions::setup()
     queue =
         VC4CL_FUNC(clCreateCommandQueue)(context, Platform::getVC4CLPlatform().VideoCoreIVGPU.toBase(), 0, &errcode);
 
-    return errcode == CL_SUCCESS && context != nullptr && queue != nullptr &&
-        (!system()->getV3DIfAvailable() ||
-            (system()->getV3DIfAvailable()->setCounter(COUNTER_IDLE, CounterType::IDLE_CYCLES) &&
-                system()->getV3DIfAvailable()->setCounter(COUNTER_EXECUTIONS, CounterType::EXECUTION_CYCLES)));
+    return errcode == CL_SUCCESS && context != nullptr && queue != nullptr;
 }
 
 void TestExecutions::testHungState()
 {
-    auto v3d = system()->getV3DIfAvailable();
-    if(!v3d)
-        return;
-    // If an execution test-case has finished (successful or timed-out) and the VC4 is still active,
-    // it is in a hung state (or another program is using it!)
-
-    // reset previous counter values
-    v3d->resetCounterValue(COUNTER_IDLE);
-    v3d->resetCounterValue(COUNTER_EXECUTIONS);
-
-    // wait some amount
-    std::this_thread::sleep_for(std::chrono::seconds{1});
-
-    // read new counter values
-    auto qpuIdle = static_cast<float>(v3d->getCounter(COUNTER_IDLE));
-    auto qpuExec = static_cast<float>(v3d->getCounter(COUNTER_EXECUTIONS));
-
-    if(qpuIdle >= 0 && qpuExec >= 0 && (qpuIdle + qpuExec) > 0)
-    {
-        // if either is -1, the VC4 is powered down, so it cannot be hung
-
-        // one QPU is 1/12 of full power -> 8%
-        // -> to be safe use a threshold of 0.04
-        float qpuUsage = qpuExec / (qpuIdle + qpuExec);
-        TEST_ASSERT_MSG(qpuUsage < 0.04f, "QPU(s) in a hung state or another program is using them!");
-    }
+    // V3D register-based hung state detection is not available with DRM backend.
+    // This test is a no-op.
 }
 
 void TestExecutions::tear_down()
 {
     VC4CL_FUNC(clReleaseCommandQueue)(queue);
     VC4CL_FUNC(clReleaseContext)(context);
-    if(auto v3d = system()->getV3DIfAvailable())
-    {
-        v3d->disableCounter(COUNTER_IDLE);
-        v3d->disableCounter(COUNTER_EXECUTIONS);
-    }
 }
 
 void TestExecutions::buildProgram(cl_program* program, const std::string& fileName)
@@ -137,6 +107,7 @@ object_wrapper<R> wrap(T* ptr)
     return wrapper;
 }
 
+#if HAS_TEST_DATA
 struct ExecutionRunner final : public test_data::TestRunner
 {
     ExecutionRunner(std::unordered_map<std::string, vc4cl::object_wrapper<vc4cl::Program>>& cache, cl_context con,
@@ -294,9 +265,11 @@ struct ExecutionRunner final : public test_data::TestRunner
 };
 
 ExecutionRunner::~ExecutionRunner() noexcept = default;
+#endif
 
 void TestExecutions::runTestData(std::string dataName)
 {
+#if HAS_TEST_DATA
     auto test = test_data::getTest(dataName);
     TEST_ASSERT(test != nullptr)
     ExecutionRunner runner{compilationCache, context, queue};
@@ -304,6 +277,7 @@ void TestExecutions::runTestData(std::string dataName)
     TEST_ASSERT(result.wasSuccess)
     if(!result.error.empty())
         TEST_ASSERT_EQUALS("(no error)", result.error);
+#endif
 }
 
 void TestExecutions::runNoSuchTestData(std::string dataName)

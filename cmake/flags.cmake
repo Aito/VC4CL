@@ -5,7 +5,7 @@ set(VC4CL_ENABLED_WARNINGS
 	-Werror=return-type -Werror=unused-result -Werror=shift-count-overflow -Werror=missing-field-initializers -Werror=reorder
 )
 # Enable additional warnings, if available
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
 	SET(VC4CL_ENABLED_WARNINGS
 		${VC4CL_ENABLED_WARNINGS}
 		-Weverything
@@ -14,6 +14,8 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
 		-Wno-exit-time-destructors -Wno-missing-prototypes -Wno-gnu-anonymous-struct -Wno-nested-anon-types -Wno-documentation
 		-Wno-unused-command-line-argument -Wno-unused-member-function -Wno-gnu-zero-variadic-macro-arguments -Wno-covered-switch-default
 		-Wno-switch-enum -Wno-return-std-move-in-c++11 -Wno-format-nonliteral
+		-Wno-unknown-warning-option -Wno-unsafe-buffer-usage -Wno-c++20-compat-pedantic -Wno-c++20-compat -Wno-extra-semi-stmt
+		-Wno-reserved-identifier -Wno-reserved-macro-identifier -Wno-undef -Wno-poison-system-directories
 		-Werror=return-stack-address
 	)
 elseif("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")

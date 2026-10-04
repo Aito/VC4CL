@@ -15,7 +15,10 @@
 #include <iomanip>
 #include <numeric>
 #include <sstream>
+#if defined(__linux__) && __has_include(<sys/prctl.h>)
 #include <sys/prctl.h>
+#define HAS_PRCTL 1
+#endif
 
 using namespace vc4cl;
 
@@ -113,7 +116,9 @@ std::unique_lock<std::mutex> vc4cl::lockLog()
 {
     static const thread_local auto threadName = []() -> std::string {
         char buffer[32] = {0};
+#ifdef HAS_PRCTL
         prctl(PR_GET_NAME, buffer, 0, 0, 0);
+#endif
         return buffer;
     }();
     std::unique_lock<std::mutex> lock(logMutex);

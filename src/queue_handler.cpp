@@ -15,7 +15,10 @@
 #include <deque>
 #include <mutex>
 #include <queue>
+#if defined(__linux__) && __has_include(<sys/prctl.h>)
 #include <sys/prctl.h>
+#define HAS_PRCTL 1
+#endif
 #include <thread>
 
 using namespace vc4cl;
@@ -94,7 +97,9 @@ std::shared_ptr<EventQueue> EventQueue::getInstance()
 void EventQueue::runEventQueue()
 {
     // Sets the POSIX thread name
+#ifdef HAS_PRCTL
     prctl(PR_SET_NAME, "VC4CL Queue Handler", 0, 0, 0);
+#endif
     while(continueRunning)
     {
         Event* event = peekQueue();

@@ -18,6 +18,7 @@ namespace vc4cl
     constexpr uint32_t PAGE_ALIGNMENT = 4096;
 
     class DRM;
+    class Mailbox;
 
     enum class CacheType : uint8_t
     {
@@ -112,6 +113,7 @@ namespace vc4cl
         SystemAccess();
 
         std::unique_ptr<DRM> drm;
+        std::unique_ptr<Mailbox> mailbox;
 
         friend std::shared_ptr<SystemAccess>& system();
     };

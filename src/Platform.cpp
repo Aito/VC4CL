@@ -18,7 +18,15 @@ using namespace vc4cl;
 Platform::Platform() : Object()
 {
     // we need thread-support, so load the pthread library dynamically (if it is not yet loaded)
+#if defined(__APPLE__)
+    void* handle = dlopen("libpthread.dylib", RTLD_GLOBAL | RTLD_LAZY);
+    if(handle == nullptr)
+        handle = RTLD_DEFAULT;
+#else
     void* handle = dlopen("libpthread.so.0", RTLD_GLOBAL | RTLD_LAZY);
+    if(handle == nullptr)
+        handle = dlopen("libpthread.so", RTLD_GLOBAL | RTLD_LAZY);
+#endif
     if(handle == nullptr)
     {
         throw std::runtime_error(std::string("Error loading pthread library: ") + dlerror());
@@ -123,7 +131,7 @@ cl_int VC4CL_FUNC(clGetPlatformIDs)(cl_uint num_entries, cl_platform_id* platfor
         {
             return returnError(CL_INVALID_VALUE, __FILE__, __LINE__, "Cannot return 0 platforms!");
         }
-        return CL_SUCCESS;
+        if(num_platforms != nullptr) *num_platforms = 1; return CL_SUCCESS;
     }
 
     if(platforms != nullptr)
@@ -131,7 +139,7 @@ cl_int VC4CL_FUNC(clGetPlatformIDs)(cl_uint num_entries, cl_platform_id* platfor
     if(num_platforms != nullptr)
         // only one single platform
         *num_platforms = 1;
-    return CL_SUCCESS;
+    if(num_platforms != nullptr) *num_platforms = 1; return CL_SUCCESS;
 }
 
 /*!
